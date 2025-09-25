@@ -1,4 +1,5 @@
 import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
+import { PluginManager } from "./PluginManager.js";
 
 export class DicecordCore
 {
@@ -11,7 +12,9 @@ export class DicecordCore
 
         this.configuration = configuration;
         this.logger = configuration.logger ?? console;
-        this.plugins = [];
+        this.pluginManager = new PluginManager({
+            logger: this.logger
+        });
         this.isReady = false;
         this.loginPromise = null;
 
@@ -36,6 +39,10 @@ export class DicecordCore
         {
             this.isReady = true;
             this.log("info", `Connected as ${this.client.user?.tag ?? "unknown user"}.`);
+            this.activatePlugins().catch((error) =>
+            {
+                this.log("error", "Plugin activation failed during ready sequence.", error);
+            });
         });
 
         this.client.on("error", (error) =>
@@ -82,22 +89,23 @@ export class DicecordCore
 
     registerPlugin(pluginDescriptor)
     {
-        if (!pluginDescriptor || !pluginDescriptor.name)
-        {
-            throw new Error("Plugin descriptor must define a name.");
-        }
+        return this.pluginManager.register(pluginDescriptor);
+    }
 
-        if (this.plugins.find((plugin) => plugin.name === pluginDescriptor.name))
-        {
-            throw new Error(`Plugin with name ${pluginDescriptor.name} is already registered.`);
-        }
-
-        this.plugins.push({
-            ...pluginDescriptor,
-            status: "registered"
+    async activatePlugins()
+    {
+        await this.pluginManager.activateAll({
+            client: this.client,
+            logger: this.logger
         });
+    }
 
-        this.log("info", `Registered plugin ${pluginDescriptor.name}.`);
+    async deactivatePlugins()
+    {
+        await this.pluginManager.deactivateAll({
+            client: this.client,
+            logger: this.logger
+        });
     }
 
     async start()
@@ -129,6 +137,7 @@ export class DicecordCore
         this.log("info", "Shutting down Dicecord core.");
         this.isReady = false;
         this.loginPromise = null;
+        await this.deactivatePlugins();
         await this.client.destroy();
     }
 }
