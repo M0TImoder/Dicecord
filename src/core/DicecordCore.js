@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials } from "discord.js";
+import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
 
 export class DicecordCore
 {
@@ -32,7 +32,7 @@ export class DicecordCore
 
     registerCoreEventHandlers()
     {
-        this.client.once("ready", () =>
+        this.client.once(Events.ClientReady, () =>
         {
             this.isReady = true;
             this.log("info", `Connected as ${this.client.user?.tag ?? "unknown user"}.`);
