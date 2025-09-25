@@ -1,5 +1,6 @@
 import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
 import { PluginManager } from "./PluginManager.js";
+import { PluginLoader } from "./PluginLoader.js";
 
 export class DicecordCore
 {
@@ -14,6 +15,10 @@ export class DicecordCore
         this.logger = configuration.logger ?? console;
         this.pluginManager = new PluginManager({
             logger: this.logger
+        });
+        this.pluginLoader = new PluginLoader({
+            logger: this.logger,
+            pluginManager: this.pluginManager
         });
         this.isReady = false;
         this.loginPromise = null;
@@ -33,6 +38,7 @@ export class DicecordCore
         this.registerCoreEventHandlers();
     }
 
+    // Discordクライアントの標準イベントを束ねる
     registerCoreEventHandlers()
     {
         this.client.once(Events.ClientReady, () =>
@@ -56,6 +62,7 @@ export class DicecordCore
         });
     }
 
+    // ログ出力窓口を集約する
     log(level, message, detail)
     {
         const target = this.resolveLoggerTarget(level);
@@ -70,6 +77,7 @@ export class DicecordCore
         }
     }
 
+    // ログ出力先を解決する
     resolveLoggerTarget(level)
     {
         const candidate = this.logger[level];
@@ -87,11 +95,13 @@ export class DicecordCore
         return console.log;
     }
 
+    // プラグイン定義を登録する
     registerPlugin(pluginDescriptor)
     {
         return this.pluginManager.register(pluginDescriptor);
     }
 
+    // プラグインを一括で有効化する
     async activatePlugins()
     {
         await this.pluginManager.activateAll({
@@ -100,6 +110,7 @@ export class DicecordCore
         });
     }
 
+    // プラグインを一括で無効化する
     async deactivatePlugins()
     {
         await this.pluginManager.deactivateAll({
@@ -108,6 +119,13 @@ export class DicecordCore
         });
     }
 
+    // プラグインディレクトリを走査する
+    async loadPluginsFromDirectory(directoryPath)
+    {
+        await this.pluginLoader.loadFromDirectory(directoryPath);
+    }
+
+    // Discordクライアントへの接続を開始する
     async start()
     {
         if (this.loginPromise)
@@ -127,6 +145,7 @@ export class DicecordCore
         return this.loginPromise;
     }
 
+    // Discordクライアントを安全に停止させる
     async shutdown()
     {
         if (!this.client)

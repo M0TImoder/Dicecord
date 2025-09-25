@@ -10,6 +10,7 @@ export class PluginManager extends EventEmitter
         this.plugins = [];
     }
 
+    // プラグイン定義を記録する
     register(descriptor)
     {
         if (!descriptor || typeof descriptor !== "object")
@@ -41,6 +42,7 @@ export class PluginManager extends EventEmitter
         return entry;
     }
 
+    // 登録済みプラグインを順に有効化する
     async activateAll(context)
     {
         for (const plugin of this.plugins)
@@ -73,6 +75,7 @@ export class PluginManager extends EventEmitter
         }
     }
 
+    // 有効状態のプラグインを順に無効化する
     async deactivateAll(context)
     {
         for (const plugin of this.plugins)
@@ -105,6 +108,7 @@ export class PluginManager extends EventEmitter
         }
     }
 
+    // プラグイン一覧を返す
     list()
     {
         return this.plugins.map((plugin) => ({
@@ -113,6 +117,7 @@ export class PluginManager extends EventEmitter
         }));
     }
 
+    // ログ出力窓口を集約する
     log(level, message, detail)
     {
         const target = this.resolveLoggerTarget(level);
@@ -127,6 +132,7 @@ export class PluginManager extends EventEmitter
         }
     }
 
+    // ログ出力先を解決する
     resolveLoggerTarget(level)
     {
         const candidate = this.logger[level];
