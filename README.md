@@ -1,2 +1,3 @@
 # Dicecord
-DiscordでTRPGを行うためのユーティリティを提供するBotです。
+
+DiscordでTRPGを行うためのユーティリティを提供するBotです。  

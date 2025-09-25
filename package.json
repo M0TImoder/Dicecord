@@ -1,0 +1,21 @@
+{
+  "name": "dicecord",
+  "version": "0.1.0",
+  "description": "Discord utility bot for TRPG support with plugin architecture.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "trpg"
+  ],
+  "author": "Team Yanbal Qina",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.6.1"
+  }
+}
