@@ -124,6 +124,12 @@ export class PluginLoader
     // ログ出力窓口を集約する
     log(level, message, detail)
     {
+        if (typeof this.logger.log === "function")
+        {
+            this.logger.log(level, message, detail);
+            return;
+        }
+
         const target = this.resolveLoggerTarget(level);
 
         if (detail)

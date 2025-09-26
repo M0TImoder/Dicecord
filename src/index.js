@@ -1,4 +1,4 @@
-import { loadEnvironment } from "./config/environment.js";
+import { loadConfiguration } from "./config/configuration.js";
 import { DicecordCore } from "./core/DicecordCore.js";
 
 let activeCore = null;
@@ -68,16 +68,33 @@ function registerProcessHandlers()
     });
 }
 
+// 設定ファイルに基づいてプラグインを事前登録する
+async function loadConfiguredPlugins(core, configuration)
+{
+    // 設定済みディレクトリを順番に読み込む
+    for (const directoryPath of configuration.pluginDirectories ?? [])
+    {
+        try
+        {
+            await core.loadPluginsFromDirectory(directoryPath);
+        }
+        catch (error)
+        {
+            core.log("error", `Failed to load plugins from ${directoryPath}.`, error);
+        }
+    }
+}
+
 async function bootstrap()
 {
     try
     {
         registerProcessHandlers();
 
-        const environment = loadEnvironment();
-        activeCore = new DicecordCore({
-            token: environment.token
-        });
+        const configuration = await loadConfiguration();
+        activeCore = new DicecordCore(configuration);
+
+        await loadConfiguredPlugins(activeCore, configuration);
 
         await activeCore.start();
     }

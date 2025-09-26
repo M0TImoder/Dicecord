@@ -31,7 +31,7 @@ export class StructuredLogger
         {
             return normalizeLogLevel(level);
         }
-        catch (error)
+        catch
         {
             const available = getKnownLogLevels().join(", ");
             throw new Error(`Unsupported log level: ${level}. Available levels: ${available}`);

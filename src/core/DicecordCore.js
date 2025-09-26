@@ -2,6 +2,8 @@ import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
 import { StructuredLogger } from "../logging/StructuredLogger.js";
 import { PluginManager } from "./PluginManager.js";
 import { PluginLoader } from "./PluginLoader.js";
+import { ConnectionSupervisor } from "./ConnectionSupervisor.js";
+import { EventDispatcher } from "./EventDispatcher.js";
 
 export class DicecordCore
 {
@@ -25,7 +27,6 @@ export class DicecordCore
             pluginManager: this.pluginManager
         });
         this.isReady = false;
-        this.loginPromise = null;
 
         this.client = new Client({
             intents: [
@@ -40,6 +41,21 @@ export class DicecordCore
         });
 
         this.registerCoreEventHandlers();
+
+        this.connectionSupervisor = new ConnectionSupervisor({
+            client: this.client,
+            token: this.configuration.token,
+            logger: this.logger,
+            maximumRetries: this.configuration.connection?.maximumRetries ?? 5,
+            initialDelayMs: this.configuration.connection?.initialDelayMs ?? 1_000,
+            maximumDelayMs: this.configuration.connection?.maximumDelayMs ?? 60_000
+        });
+
+        this.eventDispatcher = new EventDispatcher({
+            client: this.client,
+            logger: this.logger
+        });
+        this.eventDispatcher.initialize();
     }
 
     // Discordクライアントの標準イベントを束ねる
@@ -138,21 +154,14 @@ export class DicecordCore
     // Discordクライアントへの接続を開始する
     async start()
     {
-        if (this.loginPromise)
+        if (typeof this.client.isReady === "function" && this.client.isReady())
         {
-            return this.loginPromise;
+            this.log("warn", "Dicecord core is already connected. Skipping start.");
+            return;
         }
 
         this.log("info", "Starting Dicecord core.");
-
-        this.loginPromise = this.client.login(this.configuration.token).catch((error) =>
-        {
-            this.log("error", "Login failed.", error);
-            this.loginPromise = null;
-            throw error;
-        });
-
-        return this.loginPromise;
+        await this.connectionSupervisor.connect();
     }
 
     // Discordクライアントを安全に停止させる
@@ -165,7 +174,7 @@ export class DicecordCore
 
         this.log("info", "Shutting down Dicecord core.");
         this.isReady = false;
-        this.loginPromise = null;
+        this.connectionSupervisor.clear();
         await this.deactivatePlugins();
         await this.client.destroy();
 
