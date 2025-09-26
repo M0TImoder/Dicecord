@@ -1,4 +1,5 @@
 import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
+import { StructuredLogger } from "../logging/StructuredLogger.js";
 import { PluginManager } from "./PluginManager.js";
 import { PluginLoader } from "./PluginLoader.js";
 
@@ -12,7 +13,10 @@ export class DicecordCore
         }
 
         this.configuration = configuration;
-        this.logger = configuration.logger ?? console;
+        this.logger = configuration.logger ?? new StructuredLogger({
+            minimumLevel: configuration.logLevel ?? "info",
+            filePath: configuration.logFilePath
+        });
         this.pluginManager = new PluginManager({
             logger: this.logger
         });
@@ -65,6 +69,12 @@ export class DicecordCore
     // ログ出力窓口を集約する
     log(level, message, detail)
     {
+        if (typeof this.logger.log === "function")
+        {
+            this.logger.log(level, message, detail);
+            return;
+        }
+
         const target = this.resolveLoggerTarget(level);
 
         if (detail)
@@ -158,5 +168,10 @@ export class DicecordCore
         this.loginPromise = null;
         await this.deactivatePlugins();
         await this.client.destroy();
+
+        if (typeof this.logger.close === "function")
+        {
+            await this.logger.close();
+        }
     }
 }
