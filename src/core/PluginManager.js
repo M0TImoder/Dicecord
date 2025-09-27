@@ -1,4 +1,10 @@
 import { EventEmitter } from "node:events";
+import { createRequire } from "node:module";
+import { satisfies } from "semver";
+import { SUPPORTED_PLUGIN_API_VERSION, validatePluginDescriptor } from "./PluginContract.js";
+
+const require = createRequire(import.meta.url);
+const packageInfo = require("../../package.json");
 
 export class PluginManager extends EventEmitter
 {
@@ -7,39 +13,53 @@ export class PluginManager extends EventEmitter
         super();
 
         this.logger = options?.logger ?? console;
+        this.coreVersion = options?.coreVersion ?? packageInfo.version ?? "0.0.0";
+        this.eventBus = options?.eventBus ?? new EventEmitter();
         this.plugins = [];
+        this.pluginStorage = new Map();
     }
 
     // プラグイン定義を記録する
-    register(descriptor)
+    async register(descriptor)
     {
-        if (!descriptor || typeof descriptor !== "object")
+        const parsed = validatePluginDescriptor(descriptor);
+        const identity = `${parsed.manifest.name}@${parsed.manifest.version}`;
+
+        if (this.plugins.find((plugin) => plugin.identity === identity))
         {
-            throw new Error("Plugin descriptor must be an object.");
+            throw new Error(`Plugin with identity ${identity} is already registered.`);
         }
 
-        if (!descriptor.name)
-        {
-            throw new Error("Plugin descriptor must include a name property.");
-        }
-
-        if (this.plugins.find((plugin) => plugin.name === descriptor.name))
-        {
-            throw new Error(`Plugin with name ${descriptor.name} is already registered.`);
-        }
+        this.assertCompatibility(parsed.manifest);
 
         const entry = {
-            name: descriptor.name,
-            activate: descriptor.activate,
-            deactivate: descriptor.deactivate,
-            events: descriptor.events,
+            identity,
+            manifest: parsed.manifest,
+            hooks: parsed.hooks,
+            events: parsed.events ?? {},
+            exports: parsed.exports ?? {},
             status: "registered",
             eventBindings: []
         };
 
         this.plugins.push(entry);
-        this.log("info", `Registered plugin ${descriptor.name}.`);
+        this.log("info", `Registered plugin ${entry.identity}.`);
         this.emit("registered", entry);
+
+        try
+        {
+            const loadContext = this.createPluginContext({}, entry);
+            await entry.hooks.onLoad(loadContext);
+            entry.status = "loaded";
+            this.log("info", `Loaded plugin ${entry.identity}.`);
+            this.emit("loaded", entry);
+        }
+        catch (error)
+        {
+            entry.status = "error";
+            this.log("error", `Failed to load plugin ${entry.identity}.`, error);
+            this.emit("loadFailed", entry, error);
+        }
 
         return entry;
     }
@@ -49,33 +69,25 @@ export class PluginManager extends EventEmitter
     {
         for (const plugin of this.plugins)
         {
-            if (plugin.status !== "registered")
+            if (plugin.status !== "loaded")
             {
                 continue;
             }
 
             const pluginContext = this.createPluginContext(context, plugin);
 
-            if (typeof plugin.activate !== "function")
-            {
-                plugin.status = "active";
-                this.log("info", `Plugin ${plugin.name} has no activate hook. Marked as active.`);
-                this.bindDeclaredEvents(plugin, pluginContext);
-                continue;
-            }
-
             try
             {
-                await plugin.activate(pluginContext);
+                await plugin.hooks.onActivate(pluginContext);
                 plugin.status = "active";
-                this.log("info", `Activated plugin ${plugin.name}.`);
+                this.log("info", `Activated plugin ${plugin.identity}.`);
                 this.bindDeclaredEvents(plugin, pluginContext);
                 this.emit("activated", plugin);
             }
             catch (error)
             {
                 plugin.status = "error";
-                this.log("error", `Failed to activate plugin ${plugin.name}.`, error);
+                this.log("error", `Failed to activate plugin ${plugin.identity}.`, error);
                 this.teardownEvents(plugin, context?.client);
                 this.emit("activationFailed", plugin, error);
             }
@@ -94,25 +106,17 @@ export class PluginManager extends EventEmitter
 
             const pluginContext = this.createPluginContext(context, plugin);
 
-            if (typeof plugin.deactivate !== "function")
-            {
-                this.teardownEvents(plugin, context?.client);
-                plugin.status = "registered";
-                this.log("info", `Plugin ${plugin.name} has no deactivate hook. Marked as registered.`);
-                continue;
-            }
-
             try
             {
-                await plugin.deactivate(pluginContext);
-                plugin.status = "registered";
-                this.log("info", `Deactivated plugin ${plugin.name}.`);
+                await plugin.hooks.onDeactivate(pluginContext);
+                plugin.status = "loaded";
+                this.log("info", `Deactivated plugin ${plugin.identity}.`);
                 this.emit("deactivated", plugin);
             }
             catch (error)
             {
                 plugin.status = "error";
-                this.log("error", `Failed to deactivate plugin ${plugin.name}.`, error);
+                this.log("error", `Failed to deactivate plugin ${plugin.identity}.`, error);
                 this.emit("deactivationFailed", plugin, error);
             }
             finally
@@ -122,11 +126,39 @@ export class PluginManager extends EventEmitter
         }
     }
 
+    // ロード済みプラグインを順に破棄する
+    async disposeAll()
+    {
+        for (const plugin of this.plugins)
+        {
+            if (plugin.status === "disposed")
+            {
+                continue;
+            }
+
+            try
+            {
+                const disposeContext = this.createPluginContext({}, plugin);
+                await plugin.hooks.onDispose(disposeContext);
+                plugin.status = "disposed";
+                this.log("info", `Disposed plugin ${plugin.identity}.`);
+                this.emit("disposed", plugin);
+            }
+            catch (error)
+            {
+                plugin.status = "error";
+                this.log("error", `Failed to dispose plugin ${plugin.identity}.`, error);
+                this.emit("disposeFailed", plugin, error);
+            }
+        }
+    }
+
     // プラグイン一覧を返す
     list()
     {
         return this.plugins.map((plugin) => ({
-            name: plugin.name,
+            identity: plugin.identity,
+            manifest: plugin.manifest,
             status: plugin.status
         }));
     }
@@ -173,16 +205,20 @@ export class PluginManager extends EventEmitter
     // プラグイン専用のコンテキストを生成する
     createPluginContext(baseContext, plugin)
     {
-        const context = {
-            ...(baseContext ?? {}),
-            plugin: {
-                name: plugin.name
-            }
-        };
+        const storage = this.getPluginStorage(plugin.identity);
+        const logger = this.createNamespacedLogger(plugin.identity);
+        const client = this.createClientFacade(baseContext?.client);
 
-        context.log = (level, message, detail) =>
-        {
-            this.log(level, `[${plugin.name}] ${message}`, detail);
+        const context = {
+            manifest: plugin.manifest,
+            core: {
+                version: this.coreVersion,
+                pluginApiVersion: SUPPORTED_PLUGIN_API_VERSION
+            },
+            logger,
+            client,
+            storage,
+            eventBus: this.eventBus
         };
 
         context.registerEvent = (eventName, handler) =>
@@ -217,13 +253,13 @@ export class PluginManager extends EventEmitter
     {
         if (!client || typeof client.on !== "function")
         {
-            this.log("warn", `Plugin ${plugin.name} could not register event ${eventName} because client is unavailable.`);
+            this.log("warn", `Plugin ${plugin.identity} could not register event ${eventName} because client is unavailable.`);
             return noop;
         }
 
         if (typeof eventName !== "string" || eventName.length === 0)
         {
-            this.log("warn", `Plugin ${plugin.name} attempted to register an invalid event name.`);
+            this.log("warn", `Plugin ${plugin.identity} attempted to register an invalid event name.`);
             return noop;
         }
 
@@ -241,7 +277,7 @@ export class PluginManager extends EventEmitter
             }
             catch (error)
             {
-                this.log("error", `Plugin ${plugin.name} handler for ${eventName} threw an error.`, error);
+                this.log("error", `Plugin ${plugin.identity} handler for ${eventName} threw an error.`, error);
             }
         };
 
@@ -291,6 +327,105 @@ export class PluginManager extends EventEmitter
         }
 
         plugin.eventBindings = plugin.eventBindings.filter((binding) => binding.listener !== listener);
+    }
+    
+    // 互換性制約を確認する
+    assertCompatibility(manifest)
+    {
+        if (!manifest.compatibility)
+        {
+            return;
+        }
+
+        const rangeParts = [];
+
+        if (manifest.compatibility.minimumCoreVersion)
+        {
+            rangeParts.push(`>=${manifest.compatibility.minimumCoreVersion}`);
+        }
+
+        if (manifest.compatibility.maximumCoreVersion)
+        {
+            rangeParts.push(`<=${manifest.compatibility.maximumCoreVersion}`);
+        }
+
+        if (rangeParts.length === 0)
+        {
+            return;
+        }
+
+        const range = rangeParts.join(" ");
+
+        if (!satisfies(this.coreVersion, range))
+        {
+            throw new Error(`Plugin ${manifest.name}@${manifest.version} is not compatible with Dicecord core ${this.coreVersion}. Expected ${range}.`);
+        }
+    }
+
+    // プラグイン専用ストレージを返す
+    getPluginStorage(identity)
+    {
+        if (!this.pluginStorage.has(identity))
+        {
+            this.pluginStorage.set(identity, new Map());
+        }
+
+        return this.pluginStorage.get(identity);
+    }
+
+    // プラグイン専用ロガーを生成する
+    createNamespacedLogger(identity)
+    {
+        return {
+            log: (level, message, detail) =>
+            {
+                this.log(level, `[${identity}] ${message}`, detail);
+            },
+            info: (message, detail) =>
+            {
+                this.log("info", `[${identity}] ${message}`, detail);
+            },
+            warn: (message, detail) =>
+            {
+                this.log("warn", `[${identity}] ${message}`, detail);
+            },
+            error: (message, detail) =>
+            {
+                this.log("error", `[${identity}] ${message}`, detail);
+            }
+        };
+    }
+
+    // プラグイン用に制限付きクライアントを生成する
+    createClientFacade(client)
+    {
+        if (!client)
+        {
+            return {
+                sendMessage: async () =>
+                {
+                    throw new Error("Discord client is not ready.");
+                }
+            };
+        }
+
+        return {
+            sendMessage: async (channelId, payload) =>
+            {
+                const channel = await client.channels.fetch(channelId);
+
+                if (!channel || typeof channel.isDMBased === "function" && channel.isDMBased())
+                {
+                    throw new Error("Plugins are not permitted to send direct messages.");
+                }
+
+                return channel.send(payload);
+            },
+            getGuild: (guildId) =>
+            {
+                return client.guilds.cache.get(guildId) ?? null;
+            }
+        };
     }
 }
 

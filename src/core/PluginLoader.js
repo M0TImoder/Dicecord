@@ -68,7 +68,7 @@ export class PluginLoader
                 return;
             }
 
-            this.pluginManager.register(descriptor);
+            await this.pluginManager.register(descriptor);
         }
         catch (error)
         {

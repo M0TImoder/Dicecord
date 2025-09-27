@@ -22,6 +22,7 @@ export class DicecordCore
         this.pluginManager = new PluginManager({
             logger: this.logger
         });
+        this.eventBus = this.pluginManager.eventBus;
         this.pluginLoader = new PluginLoader({
             logger: this.logger,
             pluginManager: this.pluginManager
@@ -122,7 +123,7 @@ export class DicecordCore
     }
 
     // プラグイン定義を登録する
-    registerPlugin(pluginDescriptor)
+    async registerPlugin(pluginDescriptor)
     {
         return this.pluginManager.register(pluginDescriptor);
     }
@@ -131,8 +132,7 @@ export class DicecordCore
     async activatePlugins()
     {
         await this.pluginManager.activateAll({
-            client: this.client,
-            logger: this.logger
+            client: this.client
         });
     }
 
@@ -140,8 +140,7 @@ export class DicecordCore
     async deactivatePlugins()
     {
         await this.pluginManager.deactivateAll({
-            client: this.client,
-            logger: this.logger
+            client: this.client
         });
     }
 
@@ -177,6 +176,7 @@ export class DicecordCore
         this.connectionSupervisor.clear();
         await this.deactivatePlugins();
         await this.client.destroy();
+        await this.pluginManager.disposeAll();
 
         if (typeof this.logger.close === "function")
         {
